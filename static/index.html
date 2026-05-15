@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Homelab Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f0f0f; color: #e5e5e5; min-height: 100vh; }
+  .header { background: #1a1a1a; border-bottom: 1px solid #2a2a2a; padding: 1rem 1.5rem; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 10; }
+  .header h1 { font-size: 18px; font-weight: 600; color: #fff; }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .node-ip { font-size: 12px; color: #888; background: #2a2a2a; padding: 3px 10px; border-radius: 20px; font-family: monospace; }
+  .status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #888; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; animation: pulse 2s infinite; }
+  .dot.error { background: #ef4444; animation: none; }
+  @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.3} }
+  .refresh-btn { font-size: 12px; padding: 5px 12px; border: 1px solid #333; background: #2a2a2a; color: #ccc; border-radius: 6px; cursor: pointer; }
+  .refresh-btn:hover { background: #333; }
+  .main { max-width: 1300px; margin: 0 auto; padding: 1.5rem; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 1.5rem; }
+  .stat { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 10px; padding: 1rem 1.25rem; }
+  .stat .lbl { font-size: 11px; color: #666; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .stat .val { font-size: 28px; font-weight: 600; color: #fff; }
+  .toolbar { display: flex; gap: 8px; margin-bottom: 1.25rem; }
+  .toolbar input, .toolbar select { font-size: 13px; padding: 8px 12px; border: 1px solid #2a2a2a; border-radius: 8px; background: #1a1a1a; color: #e5e5e5; outline: none; }
+  .toolbar input { flex: 1; }
+  .toolbar input:focus, .toolbar select:focus { border-color: #3b82f6; }
+  .toolbar select option { background: #1a1a1a; }
+  .ns-section { margin-bottom: 1.5rem; }
+  .ns-header { font-size: 11px; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px; padding: 0 2px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+  .card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 10px; padding: 1rem; transition: border-color 0.15s; }
+  .card:hover { border-color: #3a3a3a; }
+  .card-name { font-size: 14px; font-weight: 600; color: #fff; margin-bottom: 10px; word-break: break-all; }
+  .port-row { display: flex; align-items: center; justify-content: space-between; padding: 7px 0; border-top: 1px solid #222; }
+  .port-link { font-size: 13px; color: #3b82f6; text-decoration: none; font-family: monospace; font-weight: 500; }
+  .port-link:hover { color: #60a5fa; text-decoration: underline; }
+  .port-meta { font-size: 11px; color: #555; text-align: right; font-family: monospace; }
+  .port-name { font-size: 11px; color: #444; font-family: monospace; margin-top: 2px; }
+  .empty { padding: 3rem; text-align: center; color: #555; background: #1a1a1a; border-radius: 10px; border: 1px solid #2a2a2a; }
+  .loading { padding: 3rem; text-align: center; color: #555; }
+  .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid #333; border-top-color: #3b82f6; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 8px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .error-bar { background: #2a1515; border: 1px solid #5a2020; color: #f87171; padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 1rem; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>🖥 Homelab</h1>
+  <div class="header-right">
+    <span class="node-ip" id="nodeIp">—</span>
+    <div class="status">
+      <span class="dot" id="dot"></span>
+      <span id="countdown">loading...</span>
+    </div>
+    <button class="refresh-btn" onclick="fetchServices()">↻ Refresh</button>
+  </div>
+</div>
+<div class="main">
+  <div id="errorBar" class="error-bar" style="display:none"></div>
+  <div class="stats">
+    <div class="stat"><div class="lbl">NodePort Services</div><div class="val" id="s-svcs">—</div></div>
+    <div class="stat"><div class="lbl">Namespaces</div><div class="val" id="s-ns">—</div></div>
+    <div class="stat"><div class="lbl">Exposed Ports</div><div class="val" id="s-ports">—</div></div>
+  </div>
+  <div class="toolbar">
+    <input type="text" id="search" placeholder="Search services or namespaces..." oninput="render()" />
+    <select id="nsFilter" onchange="render()"><option value="">All namespaces</option></select>
+  </div>
+  <div id="content"><div class="loading"><span class="spinner"></span>Loading services...</div></div>
+</div>
+<script>
+let allServices = [];
+let timer;
+let countdown = 30;
+
+async function fetchServices() {
+  clearInterval(timer);
+  document.getElementById('countdown').textContent = 'refreshing...';
+  document.getElementById('dot').className = 'dot';
+  try {
+    const res = await fetch('/api/services');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    document.getElementById('nodeIp').textContent = data.nodeIp;
+    document.getElementById('s-svcs').textContent = data.totalServices;
+    document.getElementById('s-ns').textContent = data.totalNamespaces;
+    document.getElementById('s-ports').textContent = data.totalPorts;
+    document.getElementById('errorBar').style.display = 'none';
+    allServices = data.services;
+    const nsFilter = document.getElementById('nsFilter');
+    const current = nsFilter.value;
+    const namespaces = [...new Set(data.services.map(s => s.namespace))].sort();
+    nsFilter.innerHTML = '<option value="">All namespaces</option>' +
+      namespaces.map(ns => `<option value="${ns}" ${ns===current?'selected':''}>${ns}</option>`).join('');
+    render();
+  } catch(e) {
+    document.getElementById('errorBar').textContent = `Error: ${e.message}`;
+    document.getElementById('errorBar').style.display = 'block';
+    document.getElementById('dot').className = 'dot error';
+  }
+  countdown = 30;
+  timer = setInterval(() => {
+    countdown--;
+    document.getElementById('countdown').textContent = `next refresh ${countdown}s`;
+    if (countdown <= 0) fetchServices();
+  }, 1000);
+}
+
+function render() {
+  const search = document.getElementById('search').value.toLowerCase();
+  const nsFilter = document.getElementById('nsFilter').value;
+  let filtered = allServices.filter(s => {
+    const matchNs = !nsFilter || s.namespace === nsFilter;
+    const matchSearch = !search || s.name.includes(search) || s.namespace.includes(search) ||
+      s.ports.some(p => String(p.nodePort).includes(search));
+    return matchNs && matchSearch;
+  });
+  const content = document.getElementById('content');
+  if (!filtered.length) { content.innerHTML = '<div class="empty">No NodePort services found</div>'; return; }
+  const grouped = {};
+  filtered.forEach(s => { if (!grouped[s.namespace]) grouped[s.namespace]=[]; grouped[s.namespace].push(s); });
+  content.innerHTML = Object.entries(grouped).sort(([a],[b])=>a.localeCompare(b)).map(([ns,svcs])=>`
+    <div class="ns-section">
+      <div class="ns-header">${ns}</div>
+      <div class="grid">
+        ${svcs.map(s=>`
+          <div class="card">
+            <div class="card-name">${s.name}</div>
+            ${s.ports.map(p=>`
+              <div class="port-row">
+                <div>
+                  <a class="port-link" href="${p.url}" target="_blank">${p.url}</a>
+                  ${p.name?`<div class="port-name">${p.name}</div>`:''}
+                </div>
+                <div class="port-meta">:${p.nodePort}<br>${p.protocol}</div>
+              </div>
+            `).join('')}
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+fetchServices();
+</script>
+</body>
+</html>
