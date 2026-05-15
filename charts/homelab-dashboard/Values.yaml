@@ -1,5 +1,7 @@
 replicaCount: 1
 
+namespace: homelab-dashboard
+
 image:
   repository: 192.168.1.15:30501/docker-local/homelab-dashboard
   tag: latest
