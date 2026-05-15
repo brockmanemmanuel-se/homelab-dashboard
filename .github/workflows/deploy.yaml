@@ -1,0 +1,51 @@
+name: Deploy homelab-dashboard
+
+on:
+  workflow_run:
+    workflows: ["Build homelab-dashboard"]
+    types:
+      - completed
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: 192.168.1.15:30501
+  IMAGE_NAME: docker-local/homelab-dashboard
+
+jobs:
+  deploy:
+    runs-on: homelab
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          mv kubectl /home/runner/bin/
+
+      - name: Install Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | \
+            HELM_INSTALL_DIR=/home/runner/bin bash
+
+      - name: Create nexus pull secret
+        run: |
+          kubectl create secret docker-registry nexus-pull-secret \
+            --namespace monitoring \
+            --docker-server=${{ env.REGISTRY }} \
+            --docker-username="$NEXUS_USERNAME" \
+            --docker-password="$NEXUS_PASSWORD" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy via Helm
+        run: |
+          helm upgrade --install homelab-dashboard ./charts/homelab-dashboard \
+            --namespace monitoring \
+            --set image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} \
+            --set image.tag=latest \
+            --set image.pullPolicy=Always \
+            --wait \
+            --timeout 5m
