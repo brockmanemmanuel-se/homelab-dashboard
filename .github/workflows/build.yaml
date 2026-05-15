@@ -1,0 +1,54 @@
+name: Build homelab-dashboard
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+  workflow_dispatch:
+
+env:
+  REGISTRY: 192.168.1.15:30501
+  IMAGE_NAME: docker-local/homelab-dashboard
+
+jobs:
+  build:
+    runs-on: homelab
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set image tag
+        run: echo "TAG=${{ github.sha }}" >> $GITHUB_ENV
+
+      - name: Wait for Docker daemon
+        run: |
+          for i in $(seq 1 30); do
+            if [ -S /var/run/docker.sock ]; then
+              chmod 666 /var/run/docker.sock 2>/dev/null || true
+              docker info > /dev/null 2>&1 && echo "Docker ready" && break
+            fi
+            sleep 2
+          done
+
+      - name: Login to Nexus
+        run: |
+          echo "$NEXUS_PASSWORD" | docker login ${{ env.REGISTRY }} \
+            --username "$NEXUS_USERNAME" \
+            --password-stdin
+
+      - name: Build and push
+        run: |
+          docker build \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }} \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            ./app
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rmi ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }} || true
+          docker rmi ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest || true
+          docker logout ${{ env.REGISTRY }} || true
