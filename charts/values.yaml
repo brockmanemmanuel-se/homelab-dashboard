@@ -1,0 +1,24 @@
+replicaCount: 1
+
+image:
+  repository: 192.168.1.15:30501/docker-local/homelab-dashboard
+  tag: latest
+  pullPolicy: Always
+
+imagePullSecrets:
+  - name: nexus-pull-secret
+
+nodeIp: "192.168.1.15"
+
+service:
+  type: NodePort
+  port: 8080
+  nodePort: 30090
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
